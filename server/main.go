@@ -3,7 +3,7 @@ import(
         "fmt"
         "net"
         "log"
-        //"sync"
+        "sync"
     )
 
 
@@ -13,30 +13,96 @@ type clientConn struct {
     isBusy bool
 }
 
-type dataChunk struct{
+type proxyConn struct{
     clientConnID int16
-    data []byte;
+    ss5Conn net.Conn
+    isBusy bool
+    m sync.Mutex
+}
+
+func (oneProxyConn *proxyConn) close(){
+    oneProxyConn.ss5Conn.Close()
+    oneProxyConn.isBusy = false
+    oneProxyConn = nil
+}
+
+func (oneProxyConn *proxyConn) new(id int16) *proxyConn{
+    oneProxyConn.clientConnID = id
+    addr, err := net.ResolveTCPAddr("tcp", ":1080")
+    if err != nil {
+        log.Fatal(err)
+        return nil
+    }
+    oneProxyConn.ss5Conn, err = net.DialTCP("tcp", nil, addr)
+    if err != nil {
+        log.Fatal(err)
+        return nil
+    }
+    oneProxyConn.isBusy = true
+    return oneProxyConn
+}
+
+func (oneProxyConn *proxyConn) runSs5Conn(clientConn net.Conn) {
+    fmt.Println("new runSs5Conn id : ", oneProxyConn.clientConnID)
+    defer oneProxyConn.close()
+    buf := make([]byte, 1024)
+    for {
+        length, _ := oneProxyConn.ss5Conn.Read(buf[5:])
+        buf[0] = 0x78
+        buf[1] = byte(oneProxyConn.clientConnID >> 8)
+        buf[2] = byte(oneProxyConn.clientConnID & 0xff)
+        buf[3] = byte(length >> 8)
+        buf[4] = byte(length & 0xff)
+        clientConn.Write(buf[:length + 5])
+        if (length == 0){
+            fmt.Println("runSs5Conn send byte is zero : ", buf[:length + 5])
+            break
+        }
+        fmt.Println("runSs5Conn send id : ", oneProxyConn.clientConnID, buf[:length + 5])
+        //fmt.Println("runSs5Conn hahaha clientConnID:", oneProxyConn.clientConnID)
+    }
+
 }
 
 
 func doConn(conn net.Conn){
-    buf := make([]byte, 1024)
+    proxyConnArr := make([]proxyConn, 512)
+    header := make([]byte, 5)
     defer conn.Close()
     for {
-        n, err := conn.Read(buf)
+        n, err := conn.Read(header)
         if n <= 0 || err != nil {
-            break
+            log.Fatal(err)
         }
-        fmt.Println(n, buf)
-		//buf[0] = 0x78
-		//buf[1] = byte(thisClientConn.id >> 8)
-		//buf[2] = byte(thisClientConn.id & 0xff)
-		//buf[3] = byte(n >> 8)
-		//buf[4] = byte(n & 0xff)
-		//gClientSendChannel <- buf
-        //conn.Write([]byte("HTTP/1.1 200 OK\r\nServer:Apache Tomcat/5.0.12\r\nDate:Mon,6Oct2003 13:23:42 GMT\r\nContent-Length:1\r\n\r\n"))
-        //conn.Write([]byte("a"))
-        //conn.Close()
+        fmt.Println("doConn recv byte : ", header[0:5])
+        flag := byte(header[0])
+        id := int16(header[1]) << 8 | int16(header[2])
+        length := int16(header[3]) << 8 | int16(header[4])
+        fmt.Println("new doConn id : %d, length : %d", id, length)
+        if (flag != 0x78) {
+            log.Fatal("runServer recv data flag is error")
+            continue
+        }
+        if length == 0 {
+            log.Println("id:%d client recv data length:0")
+            //closeClientConn(id)
+            continue
+        }
+        buf := make([]byte, length)
+        bufLength, err := conn.Read(buf)
+        if (int16(bufLength) != length) {
+            fmt.Println("recv length noequal send length", bufLength, length)
+        }
+        //fmt.Println("recv byte : ", buf)
+        if err != nil {
+            log.Fatal(err)
+            continue
+        }
+        if proxyConnArr[id].isBusy == false {
+            newOneProxyConn := proxyConnArr[id].new(id)
+            go newOneProxyConn.runSs5Conn(conn)
+        }
+        proxyConnArr[id].ss5Conn.Write(buf)
         
     }
     fmt.Println("xixi")
