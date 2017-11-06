@@ -29,13 +29,14 @@ func serverRecvData(conn net.Conn){
 	fmt.Println("serverRecvData start")
 	for {
 		data := <- gClientSendChannel
-		fmt.Println("aaa serverRecvData")
-		conn.Write(data)
+        length := int16(data[3]) << 8 | int16(data[4])
+        //fmt.Println("serverRecvData send byte : ", data)
+        conn.Write(data[:length + 5])
 	}
 }
 
 func runServer(){
-	addr, err := net.ResolveTCPAddr("tcp", ":9188")
+	addr, err := net.ResolveTCPAddr("tcp", "10.95.97.205:9188")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -46,36 +47,43 @@ func runServer(){
 	initGClientConn()
 	go serverRecvData(conn)
 	var header [5]byte
-	var id int16
+	var id,readLength int16
 	for {
 		_ , err := conn.Read(header[:])
 		if err != nil {
+            fmt.Println("runServer fatal")
 			log.Fatal(err)
 		}
-		flag := string(header[0])
+		flag := byte(header[0])
 		id = int16(header[1]) << 8 | int16(header[2])
-		length := int(header[3]) << 8 | int(header[4])
-		if (flag != "x") {
-			log.Fatal("runServer recv data flag is error")
+		length := int16(header[3]) << 8 | int16(header[4])
+		if (flag != 0x78) {
+			log.Fatal("runServer recv data flag is error", header)
 			continue
 		}
 		if length == 0 {
-			log.Println("id:%d client recv data length:0")
+			log.Println("id:%d client recv data length:0", header)
 			closeClientConn(id)
 			continue	
 		}
 		buf := make([]byte, length)
-		_, err = conn.Read(buf)
-		if err != nil {
-			log.Fatal(err)
-			continue
-		}
+        readLength = 0
+        for readLength != length {
+            tmpLength, err := conn.Read(buf[readLength:])
+            if err != nil {
+                log.Fatal(err)
+                continue
+            }
+            readLength = int16(tmpLength) + readLength
+        }
+        fmt.Println("runServer recv data :", id, length,readLength, header, buf)
 		sendClientConn(id, buf)
 	}
 	   
 }
 
 func sendClientConn(id int16, buf []byte) {
+    fmt.Println("sendClientConn id is:" ,id, gClientConn[id].conn)
 	gClientConn[id].conn.Write(buf)	
 }
 
@@ -86,7 +94,9 @@ func closeClientConn(id int16){
 
 func doConn(conn net.Conn){
     fmt.Println("xixi")
-    thisClientConn := allocClientConn()
+    thisClientConn := allocClientConn(conn)
+    thisClientConn.conn = conn
+    fmt.Println("doConn alloc id:", thisClientConn.id, gClientConn[thisClientConn.id].conn)
     buf := make([]byte, 1024)
     defer conn.Close()
     for {
@@ -100,13 +110,15 @@ func doConn(conn net.Conn){
 		buf[2] = byte(thisClientConn.id & 0xff)
 		buf[3] = byte(n >> 8)
 		buf[4] = byte(n & 0xff)
-		fmt.Println(n,"hahbbbb", buf)
+        fmt.Println("doConn send id : %d, length : %d", thisClientConn.id, n)
+        //fmt.Println(buf)
 		gClientSendChannel <- buf[:n+5]
         //conn.Write([]byte("HTTP/1.1 200 OK\r\nServer:Apache Tomcat/5.0.12\r\nDate:Mon,6Oct2003 13:23:42 GMT\r\nContent-Length:1\r\n\r\n"))
         //conn.Write([]byte("a"))
         //conn.Close()
-        
+           
     }
+    fmt.Println("doConn close id:", thisClientConn.id)
 }
 func initGClientConn(){
     gClientConn = make([]clientConn, MAX_CONN);
@@ -114,12 +126,14 @@ func initGClientConn(){
     gClientConnNum = MAX_CONN;
 }
 
-func allocClientConn() clientConn {
+func allocClientConn(conn net.Conn) clientConn {
     gClientConnAllocLock.Lock()
     for gClientConn[gClientConnIndex].isBusy {
         gClientConnIndex = (gClientConnIndex + 1) % gClientConnNum
     }
     gClientConn[gClientConnIndex].id = gClientConnIndex
+    gClientConn[gClientConnIndex].conn = conn
+    gClientConn[gClientConnIndex].isBusy = true
     gClientConnAllocLock.Unlock()
     return gClientConn[gClientConnIndex]
 }
