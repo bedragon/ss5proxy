@@ -30,7 +30,7 @@ func serverRecvData(conn net.Conn){
 	for {
 		data := <- gClientSendChannel
         length := int16(data[3]) << 8 | int16(data[4])
-        //fmt.Println("serverRecvData send byte : ", data)
+        fmt.Println("serverRecvData send byte : ", data[5:])
         conn.Write(data[:length + 5])
 	}
 }
@@ -97,7 +97,7 @@ func doConn(conn net.Conn){
     thisClientConn := allocClientConn(conn)
     thisClientConn.conn = conn
     fmt.Println("doConn alloc id:", thisClientConn.id, gClientConn[thisClientConn.id].conn)
-    buf := make([]byte, 1024)
+    buf := make([]byte, 10000)
     defer conn.Close()
     for {
         n, err := conn.Read(buf[5:])
