@@ -58,8 +58,7 @@ func (oneProxyConn *proxyConn) runSs5Conn(clientConn net.Conn) {
             fmt.Println("runSs5Conn send byte is zero : ", buf[:length + 5])
             break
         }
-        fmt.Println("runSs5Conn send id : ", oneProxyConn.clientConnID, buf[:length + 5])
-        //fmt.Println("runSs5Conn hahaha clientConnID:", oneProxyConn.clientConnID)
+        //fmt.Println("runSs5Conn send id : ", oneProxyConn.clientConnID, buf[:length + 5])
     }
 
 }
@@ -69,6 +68,7 @@ func doConn(conn net.Conn){
     proxyConnArr := make([]proxyConn, 512)
     header := make([]byte, 5)
     defer conn.Close()
+    var readLength int16
     for {
         n, err := conn.Read(header)
         if n <= 0 || err != nil {
@@ -89,15 +89,18 @@ func doConn(conn net.Conn){
             continue
         }
         buf := make([]byte, length)
-        bufLength, err := conn.Read(buf)
-        if (int16(bufLength) != length) {
-            fmt.Println("recv length noequal send length", bufLength, length)
+        readLength = 0
+        for readLength < length {
+            fmt.Println("for read ",readLength, length)
+            bufLength, err := conn.Read(buf[readLength:])
+            if err != nil {
+                log.Fatal(err)
+                continue
+            }
+            readLength = readLength + int16(bufLength)
+                
         }
-        //fmt.Println("recv byte : ", buf)
-        if err != nil {
-            log.Fatal(err)
-            continue
-        }
+        fmt.Println("recv byte : ", buf)
         if proxyConnArr[id].isBusy == false {
             newOneProxyConn := proxyConnArr[id].new(id)
             go newOneProxyConn.runSs5Conn(conn)
